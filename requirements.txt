@@ -1,0 +1,8 @@
+fastapi
+python-multipart
+uvicorn
+hatchet-sdk
+python-dotenv
+docling
+chonkie
+tokenizers 
