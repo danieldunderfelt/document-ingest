@@ -1,34 +1,24 @@
 ---
 name: ingest
 services:
-  postgres:
-    image: timescale/timescaledb-ha:pg17
+  postgres-hatchet:
+    image: postgres:15.6
+    command: postgres -c 'max_connections=200'
     restart: always
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
-      - VOYAGE_API_KEY=${VOYAGE_API_KEY}
+      - POSTGRES_USER=hatchet
+      - POSTGRES_PASSWORD=hatchet
+      - POSTGRES_DB=hatchet
     volumes:
-      - hatchet_lite_postgres_data:/home/postgres/pgdata/data
-      - ./init:/docker-entrypoint-initdb.d
+      - hatchet_lite_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready", "-d", "postgres"]
+      test: ["CMD-SHELL", "pg_isready -d hatchet -U hatchet"]
       interval: 10s
       timeout: 10s
       retries: 5
       start_period: 10s
-
-  vectorizer-worker:
-    image: timescale/pgai-vectorizer-worker:latest
-    environment:
-      PGAI_VECTORIZER_WORKER_DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
-    command: ["--poll-interval", "5s", "--log-level", "DEBUG"]
-    depends_on:
-      - postgres
 
   hatchet-lite:
     image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest
@@ -36,31 +26,38 @@ services:
       - "8888:8888"
       - "7077:7077"
     depends_on:
-      postgres:
+      postgres-hatchet:
         condition: service_healthy
     environment:
       RABBITMQ_DEFAULT_USER: "user"
       RABBITMQ_DEFAULT_PASS: "password"
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql://hatchet:hatchet@postgres-hatchet:5432/hatchet?sslmode=disable
       DATABASE_POSTGRES_PORT: "5432"
-      DATABASE_POSTGRES_HOST: "postgres"
+      DATABASE_POSTGRES_HOST: "postgres-hatchet"
       SERVER_TASKQUEUE_RABBITMQ_URL: amqp://user:password@localhost:5672/
       SERVER_AUTH_COOKIE_DOMAIN: localhost
       SERVER_AUTH_COOKIE_INSECURE: "t"
       SERVER_GRPC_BIND_ADDRESS: "0.0.0.0"
       SERVER_GRPC_INSECURE: "t"
-      SERVER_GRPC_BROADCAST_ADDRESS: localhost:7077
+      SERVER_GRPC_BROADCAST_ADDRESS: 0.0.0.0:7077
       SERVER_GRPC_PORT: "7077"
       SERVER_GRPC_MAX_MSG_SIZE: "2147483648"
-      SERVER_URL: http://localhost:8888
+      SERVER_URL: http://0.0.0.0:8888
       SERVER_AUTH_SET_EMAIL_VERIFIED: "t"
       SERVER_LOGGER_LEVEL: warn
       SERVER_LOGGER_FORMAT: console
       DATABASE_LOGGER_LEVEL: warn
       DATABASE_LOGGER_FORMAT: console
+      DATABASE_POSTGRES_SSLMODE: disable
     volumes:
       - "hatchet_lite_rabbitmq_data:/var/lib/rabbitmq/mnesia"
       - "hatchet_lite_config:/config"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   ingest-api:
     build: 
@@ -69,17 +66,20 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - HATCHET_API_URL=${HATCHET_API_URL}
-      - HATCHET_GRPC_URL=${HATCHET_GRPC_URL}
-      - VOYAGE_API_KEY=${VOYAGE_API_KEY}
+      INGEST_DB_HOST: ${INGEST_DB_HOST}
+      INGEST_DB_PORT: ${INGEST_DB_PORT}
+      INGEST_DB_NAME: ${INGEST_DB_NAME}
+      INGEST_DB_USER: ${INGEST_DB_USER}
+      INGEST_DB_PASSWORD: ${INGEST_DB_PASSWORD}
+      INGEST_DB_SCHEMA: ${INGEST_DB_SCHEMA:-public}
+      HATCHET_SERVER_URL: "http://hatchet-lite:8888"
+      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
     volumes:
       - ./tmp:/tmp
     depends_on:
-      postgres:
-        condition: service_healthy
       hatchet-lite:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   hatchet_lite_postgres_data:

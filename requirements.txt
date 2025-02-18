@@ -1,8 +1,13 @@
+# Core dependencies
 fastapi
 python-multipart
-uvicorn
+uvicorn[standard]
 hatchet-sdk
 python-dotenv
+httpx
+asyncpg
+
+# Document processing
 docling
-chonkie
+chonkie[st,semantic]
 tokenizers 

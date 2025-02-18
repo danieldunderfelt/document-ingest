@@ -1,3 +1,5 @@
 tmp
 .env
 .venv
+.idea
+.vscode

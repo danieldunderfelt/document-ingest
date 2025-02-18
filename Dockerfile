@@ -1,33 +1,75 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Use Python 3.12 slim as base image
+FROM python:3.12-slim-bookworm AS builder
 
-WORKDIR /app
+# Install uv with version pinning for reproducibility
+COPY --from=ghcr.io/astral-sh/uv:0.6.1 /uv /uvx /bin/
 
-# Enable bytecode compilation and set copy mode for mounted volumes
-ENV UV_COMPILE_BYTECODE=1
-ENV UV_LINK_MODE=copy
-
-# Install system dependencies required by docling
-RUN apt-get update && apt-get install -y \
+# Install system dependencies required for building Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies with caching
+# Set working directory
+WORKDIR /app
+
+# Create and activate virtual environment
+ENV VIRTUAL_ENV=/app/.venv
+RUN uv venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Set up uv configuration for optimal Docker usage
+ENV UV_SYSTEM_PYTHON=0
+ENV UV_CACHE_DIR=/root/.cache/uv
+ENV UV_LINK_MODE=copy
+ENV UV_COMPILE_BYTECODE=1
+
+# Install dependencies in separate layers for better caching
+# First, copy and install from requirements.txt
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install -r requirements.txt
 
-# Copy application code
+# Then, copy and install project dependencies from pyproject.toml
+COPY pyproject.toml .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install -r pyproject.toml --no-deps
+
+# Copy the rest of the application
 COPY . .
 
-# Create tmp directory for file storage
-RUN mkdir -p /tmp
+# Install the project itself in production mode
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install . --no-deps
 
-# Place executables in the environment at the front of the path
-ENV PATH="/app/.venv/bin:$PATH"
+# Create final slim image
+FROM python:3.12-slim-bookworm
 
-# Reset the entrypoint
-ENTRYPOINT []
+# Create non-root user
+RUN useradd --create-home appuser
 
-# Run the FastAPI application
-CMD ["python", "main.py"] 
+# Copy virtual environment from builder
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+
+# Set environment variables
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Create and set permissions for tmp directory
+RUN mkdir -p /tmp/uploads && chown appuser:appuser /tmp/uploads
+
+# Switch to non-root user
+USER appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy only necessary application files
+COPY --chown=appuser:appuser ./main.py /app/
+COPY --chown=appuser:appuser ./schema /app/schema/
+
+# Expose port
+EXPOSE 8000
+
+# Run the application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,45 +1,158 @@
 import os
-from typing import Optional
+from typing import Optional, List
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
-from hatchet_sdk import Hatchet, Context
+from hatchet_sdk import ClientConfig, Hatchet, Context
 from dotenv import load_dotenv
 import uvicorn
 import asyncio
 import logging
 from uuid import uuid4
+import httpx
+import asyncpg
+import json
 
 # Load environment variables
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Hatchet client
+# Initialize global variables
 hatchet_client = None
+db_pool = None
+
+# Initialize hatchet client at module level
+hatchet_client = Hatchet(
+    config=ClientConfig(
+        server_url=os.getenv("HATCHET_SERVER_URL", "http://hatchet-lite:8888"),
+        tls_config=None,
+        worker_healthcheck_enabled=False
+    ),
+    debug=True
+)
+
+async def init_db_schema():
+    """Initialize database schema if not exists"""
+    schema_name = os.getenv("INGEST_DB_SCHEMA", "public")
+    
+    # Read schema file
+    with open("schema/01_setup.sql", "r") as f:
+        schema_sql = f.read()
+    
+    # Replace schema if needed
+    if schema_name != "public":
+        schema_sql = f"CREATE SCHEMA IF NOT EXISTS {schema_name};\nSET search_path TO {schema_name};\n" + schema_sql
+    
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(schema_sql)
+            logger.info(f"Schema initialized successfully in schema: {schema_name}")
+    except Exception as e:
+        logger.error(f"Error initializing schema: {e}")
+        raise
+
+async def create_db_pool():
+    """Create database connection pool"""
+    schema_name = os.getenv("INGEST_DB_SCHEMA", "public")
+    
+    # Create pool without schema parameter
+    pool = await asyncpg.create_pool(
+        host=os.getenv("INGEST_DB_HOST"),
+        port=os.getenv("INGEST_DB_PORT"),
+        database=os.getenv("INGEST_DB_NAME"),
+        user=os.getenv("INGEST_DB_USER"),
+        password=os.getenv("INGEST_DB_PASSWORD")
+    )
+    
+    # Set schema for all connections in the pool
+    async with pool.acquire() as conn:
+        await conn.execute(f'SET search_path TO {schema_name}')
+    
+    return pool
+
+async def generate_embeddings(texts: List[str]) -> List[List[float]]:
+    """Generate embeddings using Voyage API"""
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api.voyageai.com/v1/embeddings",
+            headers={
+                "Authorization": f"Bearer {os.getenv('VOYAGE_API_KEY')}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "voyage-3-large",
+                "input": texts
+            }
+        )
+        
+        if response.status_code != 200:
+            raise Exception(f"Error generating embeddings: {response.text}")
+        
+        return [item["embedding"] for item in response.json()["data"]]
+
+@hatchet_client.workflow(on_crons=["*/1 * * * *"])  # Run every minute
+class EmbeddingGenerationWorkflow:
+    @hatchet_client.step()
+    async def generate_pending_embeddings(self, context: Context):
+        """Generate embeddings for chunks that need them"""
+        try:
+            async with db_pool.acquire() as conn:
+                # Fetch chunks that need embeddings
+                chunks = await conn.fetch("""
+                    SELECT id, content 
+                    FROM document_chunks 
+                    WHERE requires_embedding = true 
+                    LIMIT 100
+                """)
+                
+                if chunks:
+                    # Generate embeddings
+                    embeddings = await generate_embeddings([chunk["content"] for chunk in chunks])
+                    
+                    # Update chunks with embeddings
+                    for chunk, embedding in zip(chunks, embeddings):
+                        await conn.execute("""
+                            UPDATE document_chunks 
+                            SET embedding = $1, requires_embedding = false 
+                            WHERE id = $2
+                        """, embedding, chunk["id"])
+                    
+                    logger.info(f"Generated embeddings for {len(chunks)} chunks")
+                    return {"chunks_processed": len(chunks)}
+                
+                return {"chunks_processed": 0}
+                
+        except Exception as e:
+            logger.error(f"Error in embedding generation task: {e}")
+            raise
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI app startup and shutdown"""
-    # Startup
-    global hatchet_client
-    logger.info("Starting up ingest service...")
-    hatchet_client = Hatchet(
-        api_url=os.getenv("HATCHET_API_URL", "http://localhost:8888"),
-        grpc_url=os.getenv("HATCHET_GRPC_URL", "localhost:7077"),
-        debug=True
-    )
+    global db_pool
     
-    # Start Hatchet worker
+    logger.info("Starting up ingest service...")
+    
+    # Initialize database pool
+    db_pool = await create_db_pool()
+    
+    # Initialize schema
+    await init_db_schema()
+    
+    # Start Hatchet worker (using existing client)
     worker = hatchet_client.worker("ingest-worker")
     worker.register_workflow(DocumentIngestWorkflow())
+    worker.register_workflow(EmbeddingGenerationWorkflow())
     worker_task = asyncio.create_task(worker.async_start())
     
-    yield  # Application runs here
+    yield
     
     # Shutdown
     logger.info("Shutting down ingest service...")
     worker_task.cancel()
+    await db_pool.close()
+    
     try:
         await worker_task
     except asyncio.CancelledError:
@@ -93,7 +206,7 @@ class DocumentIngestWorkflow:
     async def parse_and_chunk(self, context: Context):
         """Parse document and create chunks"""
         from docling.document_converter import DocumentConverter
-        from chonkie import TokenChunker
+        from chonkie import SemanticChunker
         from tokenizers import Tokenizer
 
         inputs = context.workflow_input()
@@ -121,7 +234,7 @@ class DocumentIngestWorkflow:
 
             # Initialize chunker
             tokenizer = Tokenizer.from_pretrained("gpt2")
-            chunker = TokenChunker(
+            chunker = SemanticChunker(
                 tokenizer=tokenizer,
                 chunk_size=512,
                 overlap=50
@@ -142,17 +255,32 @@ class DocumentIngestWorkflow:
                     "requires_embedding": True
                 })
 
+            # Generate embeddings for chunks
+            embeddings = await generate_embeddings([chunk["content"] for chunk in chunk_records])
+            
+            # Update chunk records with embeddings
+            for chunk_record, embedding in zip(chunk_records, embeddings):
+                chunk_record["embedding"] = embedding
+                chunk_record["requires_embedding"] = False
+
             # Insert chunks into database
-            async with context.get_database_connection() as conn:
+            async with db_pool.acquire() as conn:
                 await conn.executemany("""
                     INSERT INTO document_chunks (
                         content, token_count, document_id, project_id, 
-                        chunk_index, requires_embedding
+                        chunk_index, requires_embedding, embedding
                     ) VALUES (
-                        :content, :token_count, :document_id, :project_id,
-                        :chunk_index, :requires_embedding
+                        $1, $2, $3, $4, $5, $6, $7
                     )
-                """, chunk_records)
+                """, [(
+                    r["content"], 
+                    r["token_count"], 
+                    r["document_id"],
+                    r["project_id"],
+                    r["chunk_index"],
+                    r["requires_embedding"],
+                    r["embedding"]
+                ) for r in chunk_records])
 
             # Clean up temporary file
             os.remove(file_path)

@@ -1,0 +1,6 @@
+{
+  "dependencies": {},
+  "devDependencies": {
+    "cursor-tools": "^0.5.0"
+  }
+}

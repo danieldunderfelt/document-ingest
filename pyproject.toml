@@ -1,0 +1,13 @@
+[project]
+name = "your-project-name"
+version = "0.1.0"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "python-multipart",
+    "hatchet-sdk",
+    "python-dotenv",
+    "httpx",
+    "asyncpg",
+] 
