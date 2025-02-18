@@ -5,3 +5,4 @@ tmp
 .vscode
 test
 models
+.cursor
