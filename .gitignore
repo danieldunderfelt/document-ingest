@@ -6,3 +6,4 @@ tmp
 test
 models
 .cursor
+ingest.code-workspace
