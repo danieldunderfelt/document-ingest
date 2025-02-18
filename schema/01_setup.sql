@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS documents (
     metadata JSONB DEFAULT '{}'::jsonb
 );
 
+DROP TABLE IF EXISTS document_chunks;
+
 -- Create document_chunks table with vector support
 CREATE TABLE IF NOT EXISTS document_chunks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,7 +21,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     token_count INTEGER NOT NULL,
     chunk_index INTEGER NOT NULL,
     requires_embedding BOOLEAN DEFAULT true,
-    embedding vector(1024),  -- voyage-3-large uses 1024 dimensions
+    embedding vector(768),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     metadata JSONB DEFAULT '{}'::jsonb
 );

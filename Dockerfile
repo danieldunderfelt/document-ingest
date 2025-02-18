@@ -29,20 +29,11 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install -r requirements.txt
 
-# Then, copy and install project dependencies from pyproject.toml
-COPY pyproject.toml .
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install -r pyproject.toml --no-deps
-
-# Copy the rest of the application
-COPY . .
-
-# Install the project itself in production mode
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install . --no-deps
-
 # Create final slim image
 FROM python:3.12-slim-bookworm
+
+# Copy uv from builder stage
+COPY --from=ghcr.io/astral-sh/uv:0.6.1 /uv /uvx /bin/
 
 # Create non-root user
 RUN useradd --create-home appuser
@@ -53,7 +44,10 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_SYSTEM_PYTHON=0 \
+    UV_CACHE_DIR=/root/.cache/uv \
+    UV_LINK_MODE=copy
 
 # Create and set permissions for tmp directory
 RUN mkdir -p /tmp/uploads && chown appuser:appuser /tmp/uploads
@@ -67,6 +61,41 @@ WORKDIR /app
 # Copy only necessary application files
 COPY --chown=appuser:appuser ./main.py /app/
 COPY --chown=appuser:appuser ./schema /app/schema/
+
+# Create models directory and set permissions
+RUN mkdir -p /app/models && chown appuser:appuser /app/models
+
+# Switch back to root temporarily to install additional dependencies
+USER root
+
+# Install additional dependencies needed for document processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-* \
+    libtesseract-dev \
+    libleptonica-dev \
+    pkg-config \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Tesseract data prefix environment variable
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata/
+
+# Install tesserocr with uv
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --no-binary :all: tesserocr
+
+# Switch back to appuser
+USER appuser
+
+# Check if models exist and download if needed
+RUN if [ -z "$(ls -A /app/models)" ]; then \
+      echo "Models directory is empty, downloading models..." && \
+      docling-tools models download && \
+      mv $HOME/.cache/docling/models/* /app/models/ ; \
+    else \
+      echo "Models already exist in volume, skipping download" ; \
+    fi
 
 # Expose port
 EXPOSE 8000

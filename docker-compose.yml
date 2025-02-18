@@ -69,6 +69,7 @@ services:
       HATCHET_SERVER_URL: "http://hatchet-lite:8888"
     volumes:
       - ./tmp:/tmp
+      - models_data:/app/models
     depends_on:
       hatchet-lite:
         condition: service_healthy
@@ -79,3 +80,4 @@ volumes:
   hatchet_lite_postgres_data:
   hatchet_lite_rabbitmq_data:
   hatchet_lite_config:
+  models_data:
