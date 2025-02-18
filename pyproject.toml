@@ -1,5 +1,5 @@
 [project]
-name = "your-project-name"
+name = "ingest-server"
 version = "0.1.0"
 dependencies = [
     "fastapi",
