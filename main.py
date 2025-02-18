@@ -85,64 +85,6 @@ async def create_db_pool():
     
     return pool
 
-'''
-async def generate_embeddings(texts: List[str]) -> List[List[float]]:
-    """Generate embeddings using Voyage API"""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.voyageai.com/v1/embeddings",
-            headers={
-                "Authorization": f"Bearer {os.getenv('VOYAGE_API_KEY')}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": "voyage-3-large",
-                "input": texts
-            }
-        )
-        
-        if response.status_code != 200:
-            raise Exception(f"Error generating embeddings: {response.text}")
-        
-        return [item["embedding"] for item in response.json()["data"]]
-
-@hatchet_client.workflow(on_crons=["*/1 * * * *"])  # Run every minute
-class EmbeddingGenerationWorkflow:
-    @hatchet_client.step()
-    async def generate_pending_embeddings(self, context: Context):
-        # Generate embeddings for chunks that need them
-        try:
-            async with db_pool.acquire() as conn:
-                # Fetch chunks that need embeddings
-                chunks = await conn.fetch("""
-                    SELECT id, content 
-                    FROM document_chunks 
-                    WHERE requires_embedding = true 
-                    LIMIT 100
-                """)
-                
-                if chunks:
-                    # Generate embeddings
-                    embeddings = await generate_embeddings([chunk["content"] for chunk in chunks])
-                    
-                    # Update chunks with embeddings
-                    for chunk, embedding in zip(chunks, embeddings):
-                        await conn.execute("""
-                            UPDATE document_chunks 
-                            SET embedding = $1, requires_embedding = false 
-                            WHERE id = $2
-                        """, embedding, chunk["id"])
-                    
-                    logger.info(f"Generated embeddings for {len(chunks)} chunks")
-                    return {"chunks_processed": len(chunks)}
-                
-                return {"chunks_processed": 0}
-                
-        except Exception as e:
-            logger.error(f"Error in embedding generation task: {e}")
-            raise
-'''
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI app startup and shutdown"""
