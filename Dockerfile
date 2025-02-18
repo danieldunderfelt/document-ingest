@@ -70,32 +70,11 @@ USER root
 
 # Install additional dependencies needed for document processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr \
-    tesseract-ocr-* \
-    libtesseract-dev \
-    libleptonica-dev \
-    pkg-config \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Set Tesseract data prefix environment variable
-ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata/
-
-# Install tesserocr with uv
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --no-binary :all: tesserocr
-
 # Switch back to appuser
 USER appuser
-
-# Check if models exist and download if needed
-RUN if [ -z "$(ls -A /app/models)" ]; then \
-      echo "Models directory is empty, downloading models..." && \
-      docling-tools models download && \
-      mv $HOME/.cache/docling/models/* /app/models/ ; \
-    else \
-      echo "Models already exist in volume, skipping download" ; \
-    fi
 
 # Expose port
 EXPOSE 8000

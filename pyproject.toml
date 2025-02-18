@@ -10,4 +10,5 @@ dependencies = [
     "python-dotenv",
     "httpx",
     "asyncpg",
+    "einops"
 ] 

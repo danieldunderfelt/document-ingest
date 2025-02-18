@@ -11,3 +11,7 @@ asyncpg
 docling
 chonkie[st,semantic]
 tokenizers 
+
+# ML dependencies
+einops
+sentence-transformers
