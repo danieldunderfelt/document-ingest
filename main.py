@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from hatchet_sdk import ClientConfig, Hatchet, Context
-from dotenv import load_dotenv
 import uvicorn
 import asyncio
 import logging
@@ -12,9 +11,8 @@ from uuid import uuid4
 import httpx
 import asyncpg
 import json
+import base64
 
-# Load environment variables
-load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -23,11 +21,12 @@ hatchet_client = None
 db_pool = None
 
 # Initialize hatchet client at module level
+token = os.getenv("HATCHET_CLIENT_TOKEN", "")
+
 hatchet_client = Hatchet(
     config=ClientConfig(
         server_url=os.getenv("HATCHET_SERVER_URL", "http://hatchet-lite:8888"),
-        tls_config=None,
-        worker_healthcheck_enabled=False
+        token=token
     ),
     debug=True
 )

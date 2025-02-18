@@ -39,7 +39,7 @@ services:
       SERVER_AUTH_COOKIE_INSECURE: "t"
       SERVER_GRPC_BIND_ADDRESS: "0.0.0.0"
       SERVER_GRPC_INSECURE: "t"
-      SERVER_GRPC_BROADCAST_ADDRESS: 0.0.0.0:7077
+      SERVER_GRPC_BROADCAST_ADDRESS: hatchet-lite:7077
       SERVER_GRPC_PORT: "7077"
       SERVER_GRPC_MAX_MSG_SIZE: "2147483648"
       SERVER_URL: http://0.0.0.0:8888
@@ -66,20 +66,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      INGEST_DB_HOST: ${INGEST_DB_HOST}
-      INGEST_DB_PORT: ${INGEST_DB_PORT}
-      INGEST_DB_NAME: ${INGEST_DB_NAME}
-      INGEST_DB_USER: ${INGEST_DB_USER}
-      INGEST_DB_PASSWORD: ${INGEST_DB_PASSWORD}
-      INGEST_DB_SCHEMA: ${INGEST_DB_SCHEMA:-public}
       HATCHET_SERVER_URL: "http://hatchet-lite:8888"
-      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN}
-      VOYAGE_API_KEY: ${VOYAGE_API_KEY}
     volumes:
       - ./tmp:/tmp
     depends_on:
       hatchet-lite:
         condition: service_healthy
+    env_file:
+      - .env
 
 volumes:
   hatchet_lite_postgres_data:
